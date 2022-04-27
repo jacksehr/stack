@@ -2,6 +2,7 @@
 	let text = '';
 
 	let textbox: HTMLDivElement;
+  const focusTextbox = () => textbox.focus();
 
 	const stack: string[] = [];
 </script>
@@ -12,7 +13,7 @@
 
 <div class="container">
 	<h1>Stack.</h1>
-	<div class="card" on:click={() => textbox.focus()}>
+	<div class="card" on:click={focusTextbox}>
 		<div
 			bind:this={textbox}
 			class="editable-text"
@@ -29,6 +30,8 @@
 			role="button"
 			on:click={() => {
 				text = stack.pop() ?? '';
+
+        focusTextbox();
 			}}
 		/>
 		<img
@@ -41,6 +44,8 @@
 
 				stack.push(text);
 				text = '';
+
+        focusTextbox();
 			}}
 		/>
 	</div>
