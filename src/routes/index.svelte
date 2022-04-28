@@ -1,10 +1,33 @@
 <script lang="ts">
+	import { onDestroy, onMount } from 'svelte';
+  import { browser } from '$app/env';
+	import { writable } from 'svelte/store';
+
+	const CACHE_KEY = 'notes-cache-key';
+
 	let text = '';
 
 	let textbox: HTMLDivElement;
-  const focusTextbox = () => textbox.focus();
+	const focusTextbox = () => textbox.focus();
 
-	const stack: string[] = [];
+  let initStack: string[] = [];
+  try {
+    if (browser) {
+      initStack = JSON.parse(window.localStorage.getItem(CACHE_KEY) || "[]");
+    }
+  } catch(err) {
+    console.error(err);
+  }
+
+  const stack = writable<string[]>(initStack);
+  onMount(() => {
+    stack.subscribe((value) => {
+      console.log({ value, browser })
+      if (!browser) return;
+
+      window.localStorage.setItem(CACHE_KEY, JSON.stringify(value));
+    });
+  });
 </script>
 
 <svelte:head>
@@ -29,9 +52,12 @@
 			alt="complete-note"
 			role="button"
 			on:click={() => {
-				text = stack.pop() ?? '';
+        if ($stack.length == 0) return;
 
-        focusTextbox();
+				text = $stack.pop() ?? '';
+        $stack = $stack.slice(0, -1);
+
+				focusTextbox();
 			}}
 		/>
 		<img
@@ -42,10 +68,10 @@
 			on:click={() => {
 				if (!text) return;
 
-				stack.push(text);
+				$stack = [...$stack, text];
 				text = '';
 
-        focusTextbox();
+				focusTextbox();
 			}}
 		/>
 	</div>
