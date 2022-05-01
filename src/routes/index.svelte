@@ -1,81 +1,113 @@
 <script lang="ts">
-	import { onDestroy, onMount } from 'svelte';
-  import { browser } from '$app/env';
-	import { writable } from 'svelte/store';
+	let currentText = '';
 
-	const CACHE_KEY = 'notes-cache-key';
+	let stack: { id: string; text: string }[] = [];
 
-	let text = '';
+	import { createClient } from '@supabase/supabase-js';
+
+	// Create a single supabase client for interacting with your database
+	const supabase = createClient(
+		'https://iieojksehfiegxvfdxah.supabase.co',
+		'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlpZW9qa3NlaGZpZWd4dmZkeGFoIiwicm9sZSI6ImFub24iLCJpYXQiOjE2NTE0MjkxMjYsImV4cCI6MTk2NzAwNTEyNn0.j2kcCyqZbvChFnz6ZgyTT_R2DPABRcPlgVjigeMaqLg',
+		{
+			// edge reasons
+			fetch: fetch.bind(globalThis)
+		}
+	);
 
 	let textbox: HTMLDivElement;
 	const focusTextbox = () => textbox.focus();
 
-  let initStack: string[] = [];
-  try {
-    if (browser) {
-      initStack = JSON.parse(window.localStorage.getItem(CACHE_KEY) || "[]");
-    }
-  } catch(err) {
-    console.error(err);
-  }
+	const user = supabase.auth.user();
 
-  const stack = writable<string[]>(initStack);
-  onMount(() => {
-    stack.subscribe((value) => {
-      console.log({ value, browser })
-      if (!browser) return;
+  console.log({ user });
 
-      window.localStorage.setItem(CACHE_KEY, JSON.stringify(value));
-    });
-  });
+	const getStack = async () => {
+		if (user) {
+			const { data, error } = await supabase
+				.from('stack')
+				.select()
+				.filter('user_id', 'eq', user.id);
+
+			if (error) {
+				return Promise.reject(error);
+			}
+
+			return data;
+		}
+	};
+
+	getStack().then((data) => {
+		if (!data) return;
+
+		stack = [...data];
+    currentText = data.pop().text;
+	});
 </script>
 
 <svelte:head>
 	<title>Stack</title>
 </svelte:head>
 
-<div class="container">
-	<h1>Stack.</h1>
-	<div class="card" on:click={focusTextbox}>
-		<div
-			bind:this={textbox}
-			class="editable-text"
-			role="textbox"
-			contenteditable="true"
-			bind:textContent={text}
-		/>
+{#if !user}
+	<h1
+		role="button"
+		on:click={async () => {
+			await supabase.auth.signIn({
+				provider: 'google'
+			});
+		}}
+	>
+		Sign in
+	</h1>
+{:else}
+	<div class="container">
+		<h1>Stack.</h1>
+		<div class="card" on:click={focusTextbox}>
+			<div
+				bind:this={textbox}
+				class="editable-text"
+				role="textbox"
+				contenteditable="true"
+				bind:textContent={currentText}
+			/>
+		</div>
+		<div class="toolbar">
+			<img
+				class="icon"
+				src="/icons/tick.svg"
+				alt="complete-note"
+				role="button"
+				on:click={async () => {
+					const itemToComplete = stack.pop();
+					if (!itemToComplete) return;
+
+					const result = await supabase.from('stack').delete().match({ id: itemToComplete.id });
+          console.log({ result });
+
+					currentText = stack[stack.length - 1]?.text ?? '';
+
+					focusTextbox();
+				}}
+			/>
+			<img
+				class="icon"
+				src="/icons/add.svg"
+				alt="add-note"
+				role="button"
+				on:click={async () => {
+					if (!currentText) return;
+
+					await supabase.from('stack').insert({ text: currentText, user_id: user.id });
+
+          currentText = "";
+
+					focusTextbox();
+				}}
+			/>
+		</div>
 	</div>
-	<div class="toolbar">
-		<img
-			class="icon"
-			src="/icons/tick.svg"
-			alt="complete-note"
-			role="button"
-			on:click={() => {
-        if ($stack.length == 0) return;
-
-				text = $stack.pop() ?? '';
-        $stack = $stack.slice(0, -1);
-
-				focusTextbox();
-			}}
-		/>
-		<img
-			class="icon"
-			src="/icons/add.svg"
-			alt="add-note"
-			role="button"
-			on:click={() => {
-				if (!text) return;
-
-				$stack = [...$stack, text];
-				text = '';
-
-				focusTextbox();
-			}}
-		/>
-	</div>
-</div>
+{/if}
 
 <style>
 	@font-face {
