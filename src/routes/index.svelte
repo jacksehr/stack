@@ -1,48 +1,74 @@
 <script lang="ts">
-	let currentText = '';
+	import { dev } from '$app/env';
+	import { writable } from 'svelte/store';
+	import { createClient } from '@supabase/supabase-js';
+	import { debounce } from 'lodash';
+	import { onDestroy } from 'svelte';
 
 	let stack: { id: string; text: string }[] = [];
-
-	import { createClient } from '@supabase/supabase-js';
+	let currentId = '';
 
 	// Create a single supabase client for interacting with your database
 	const supabase = createClient(
 		'https://iieojksehfiegxvfdxah.supabase.co',
-		'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlpZW9qa3NlaGZpZWd4dmZkeGFoIiwicm9sZSI6ImFub24iLCJpYXQiOjE2NTE0MjkxMjYsImV4cCI6MTk2NzAwNTEyNn0.j2kcCyqZbvChFnz6ZgyTT_R2DPABRcPlgVjigeMaqLg',
-		{
-			// edge reasons
-			fetch: fetch.bind(globalThis)
-		}
+		'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlpZW9qa3NlaGZpZWd4dmZkeGFoIiwicm9sZSI6ImFub24iLCJpYXQiOjE2NTE0MjkxMjYsImV4cCI6MTk2NzAwNTEyNn0.j2kcCyqZbvChFnz6ZgyTT_R2DPABRcPlgVjigeMaqLg'
 	);
+
+  const useSupabase = () => supabase.from<{ user_id: string; text: string, id: string }>("stack");
 
 	let textbox: HTMLDivElement;
 	const focusTextbox = () => textbox.focus();
 
-	const user = supabase.auth.user();
+	let user = supabase.auth.user();
 
-  console.log({ user });
+	const currentText = writable('');
+	const saveText = async (value: string) => {
+		await useSupabase().upsert({ id: currentId || undefined, user_id: user?.id, text: value });
+	};
+  const debouncedSaveText = debounce(saveText, 500);
+	let unsubscribe = currentText.subscribe(debouncedSaveText);
+  
+  // for wiping the note
+  const reset = ({id, text}: { id?: string, text: string }) => {
+    unsubscribe();
 
-	const getStack = async () => {
+    currentId = id ?? "";
+    currentText.set(text);
+
+    unsubscribe = currentText.subscribe(debouncedSaveText);
+  }
+
+	const refreshStack = async () => {
 		if (user) {
-			const { data, error } = await supabase
-				.from('stack')
+			const { data, error } = await useSupabase()
 				.select()
 				.filter('user_id', 'eq', user.id);
 
 			if (error) {
-				return Promise.reject(error);
+				throw error;
 			}
 
-			return data;
+			stack = [...data];
+      const newData = data.pop();
+      if (!newData) {
+        currentId = "";
+        return reset({ text: "" });
+      }
+
+			const { id, text } = newData;
+			reset({ id, text });
+			currentId = id;
 		}
 	};
 
-	getStack().then((data) => {
-		if (!data) return;
+	refreshStack();
 
-		stack = [...data];
-    currentText = data.pop().text;
+	supabase.auth.onAuthStateChange(() => {
+		user = supabase.auth.user();
+		refreshStack();
 	});
+
+	onDestroy(unsubscribe);
 </script>
 
 <svelte:head>
@@ -53,9 +79,12 @@
 	<h1
 		role="button"
 		on:click={async () => {
-			await supabase.auth.signIn({
-				provider: 'google'
-			});
+			await supabase.auth.signIn(
+				{
+					provider: 'google'
+				},
+				{ redirectTo: dev ? 'http://localhost:3000' : undefined }
+			);
 		}}
 	>
 		Sign in
@@ -69,7 +98,7 @@
 				class="editable-text"
 				role="textbox"
 				contenteditable="true"
-				bind:textContent={currentText}
+				bind:textContent={$currentText}
 			/>
 		</div>
 		<div class="toolbar">
@@ -82,10 +111,15 @@
 					const itemToComplete = stack.pop();
 					if (!itemToComplete) return;
 
-					const result = await supabase.from('stack').delete().match({ id: itemToComplete.id });
-          console.log({ result });
+					await useSupabase().delete().match({ id: itemToComplete.id });
 
-					currentText = stack[stack.length - 1]?.text ?? '';
+					const newHead = stack[stack.length - 1];
+					if (!newHead) {
+						reset({ text: "" });
+					} else {
+						const { id, text } = newHead;
+            reset({ id, text });
+					}
 
 					focusTextbox();
 				}}
@@ -96,11 +130,13 @@
 				alt="add-note"
 				role="button"
 				on:click={async () => {
-					if (!currentText) return;
+					if (!$currentText) return;
 
-					await supabase.from('stack').insert({ text: currentText, user_id: user.id });
+					const { data } = await useSupabase().insert({ text: "", user_id: user?.id });
 
-          currentText = "";
+          if (!data?.length) return;
+
+          reset({ text: "", id: data[0].id });
 
 					focusTextbox();
 				}}
